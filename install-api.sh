@@ -14,9 +14,11 @@ showMESSAGE() {
     fi
 }
 
-showMESSAGE "Criando API." true 1
-showMESSAGE "Criando API.." true 1
-showMESSAGE "Criando API..." true 2
+showMESSAGE "Obrigado por utilizar o meu API generator!" true 3
+
+showMESSAGE "Criando NodeJS API." true 1
+showMESSAGE "Criando NodeJS API.." true 1
+showMESSAGE "Criando NodeJS API..." true 2
 
 showMESSAGE "Criando package.json..." true 2
 npm init -y 
@@ -221,7 +223,9 @@ npx prisma migrate dev --name init
 
 echo $'\n' >> tsconfig.json
 
-echo "API CRIADA COM SUCESSO! \n"
+showMESSAGE "API CRIADA COM SUCESSO!" false 1
+
+showMESSAGE "Developed by Mecyo!" false 2
 
 if [ $OPT_SELECTED != "cockroachdb" ]; then
    printf "Deseja iniciar o servidor?  Y/N \n\n"
