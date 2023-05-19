@@ -25,6 +25,10 @@ Gerador de Api NodeJS
 3. Quando solicitado, ** * **informe os dados necessários;
 4. Crie suas rotas no arquivo **_src/routes.ts_** seguindo os exemplos e usufrua da sua API!
 
+OBS.: 
+    Ao final da execução do script você será perguntado se deseja iniciar o server e o script executará o comando **_npm run dev_**;
+    Utilize este mesmo comando sempre que parar e quiser executar seu server novamente.
+
 
 ** * ** No momento da instalação do prisma, será necessário informar a connectionString para o seu banco de dados. Quando solicitado, faça conforme abaixo:
 | DATABASE | ConnectionString FORMAT |
