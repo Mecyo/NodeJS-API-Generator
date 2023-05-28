@@ -113,12 +113,39 @@ fi
 showMESSAGE "Iniciando prisma e configurando para o banco ${OPT_SELECTED^^}" true 2
 npx prisma init --datasource-provider $OPT_SELECTED |& tee -a Logs.txt
 
-
 showMESSAGE "Instalando o DOTENV para permitir acessar as variáveis informadas no arquivo .env ..." true 2
 npm install dotenv |& tee -a Logs.txt
 
 showMESSAGE "Instalando gerenciamento de CORS..." true 2
 npm i @fastify/cors |& tee -a Logs.txt
+
+showMESSAGE "Instalando gerenciamento de Multipart(upload de arquivos)..." true 2
+npm i @fastify/multipart |& tee -a Logs.txt
+
+showMESSAGE "Instalando biblioteca de gerenciamento de arquivos estáticos..." true 2
+npm i @fastify/static |& tee -a Logs.txt
+
+showMESSAGE "Instalando biblioteca de gerenciamento de autenticação das requisições HTTP (JWT)..." true 2
+npm i @fastify/jwt |& tee -a Logs.txt
+
+showMESSAGE "Criando arquivo de padronização das informações contidas no token JWT..." true 2
+
+cat <<EOF >src/auth.d.ts
+import '@fastify/jwt';
+
+declare module '@fastify/jwt' {
+    export interface FastifyJWT {
+        user: {
+            id: string
+            name: string
+            avatarUrl: string
+        }
+    }
+}
+EOF
+
+showMESSAGE "Instalando axios para abstração de requisições HTTP..." true 2
+npm i axios |& tee -a Logs.txt
 
 showMESSAGE "Instalando ZOD para validar os dados de requests utilizando objects..." true 2
 npm i zod |& tee -a Logs.txt
@@ -126,13 +153,32 @@ npm i zod |& tee -a Logs.txt
 showMESSAGE "Instalando dayjs..." true 2
 npm i dayjs |& tee -a Logs.txt
 
+prismaActivateLogQuery=''
+prepareLogQueryOption() {
+  prismaActivateLogQuery="{
+  log: ['query'],
+}"
+    echo Log query habilitado!
+}
+read -p "Deseja habilitar o log de queries? ([S]im/[N]ão) " yn
+
+case $yn in 
+	Sim ) prepareLogQueryOption;;
+  sim ) prepareLogQueryOption;;
+  [sS] ) prepareLogQueryOption;;
+  Yes ) pprepareLogQueryOption;;
+  yes ) pprepareLogQueryOption;;
+  [yY] ) prepareLogQueryOption;;
+	* ) echo Log query desabilitado!;
+esac
+
 showMESSAGE "Criando arquivo de instanciação do prisma e exportando..." true 2
 
 mkdir src/lib |& tee -a Logs.txt
 cat <<EOF >src/lib/prisma.ts
 import { PrismaClient } from '@prisma/client';
 
-export const prisma = new PrismaClient();
+export const prisma = new PrismaClient($prismaActivateLogQuery);
 EOF
 
 showMESSAGE "Criando arquivo server.ts para inicialização do servidor..." true 2
@@ -140,8 +186,10 @@ showMESSAGE "Criando arquivo server.ts para inicialização do servidor..." true
 cat <<EOF >src/server.ts
 import Fastify from "fastify";
 import dotenv from 'dotenv';
+import jwt from '@fastify/jwt';
 import cors from '@fastify/cors';
-import { appRoutes } from './routes'
+import { appRoutes } from './routes/routes';
+import { authRoutes } from './routes/auth';
 
 
 dotenv.config();
@@ -150,7 +198,10 @@ const app = Fastify();
 
 app.register(cors);
 app.register(appRoutes);
-
+app.register(authRoutes);
+app.register(jwt, {
+	secret: process.env.JWT_SECRET || 'myJWTSecret'
+});
 
 //Porta liberada para o servidor
 const port = process.env.SERVER_PORT ? Number(process.env.SERVER_PORT) : 3333;
@@ -168,9 +219,10 @@ EOF
 
 showMESSAGE "Criando arquivo de rotas(endpoints) e exportando..." true 2
 
-cat <<EOF >src/routes.ts
+mkdir src/routes |& tee -a Logs.txt
+cat <<EOF >src/routes/routes.ts
 import { FastifyInstance } from "fastify";
-import { prisma } from "./lib/prisma";
+import { prisma } from "../lib/prisma";
 import dotenv from 'dotenv';
 import { z } from 'zod';
 
@@ -178,19 +230,23 @@ dotenv.config();
 
 export async function appRoutes(app: FastifyInstance) {
 
+    app.addHook('preHandler', async (request) => {
+        await request.jwtVerify()
+    });
+    
     app.get('/health-check', async () => {
         const databaseDate = await prisma.test.count();
         return 'SERVER RUNNING!'
     });
 
-    app.get('/getTestParams', async (request) => {
+    app.get('/getTestParams', async (request, reply) => {
         const getTestParams = z.object({
             nome: z.string()
         });
         
         const { nome } = getTestParams.parse(request.query);//Valida os dados enviados na request
         
-        const teste = await prisma.test.findFirst({//retorna a primeira linha encontrada da tabela test, de acordo ocm os parâmetros da cláusula where
+        const teste = await prisma.test.findFirstOrThrow({//retorna a primeira linha encontrada da tabela test, de acordo ocm os parâmetros da cláusula where
             where: {//cláusula where da consulta
                 name: {
                     equals: nome,
@@ -200,26 +256,160 @@ export async function appRoutes(app: FastifyInstance) {
             },
             select: {//Colunas retornadas pelo select
                 id: true,
+                userId: true,
             },
         });
 
+        if (teste.userId !== request.user.id) {
+            return reply.status(401).send()
+        }
         const idTest = teste ? teste.id : undefined;
         
         return idTest;
     });
 }
 EOF
+
 showMESSAGE "Adicionando variáveis SERVER_PORT e SERVER_HOST ao arquivo .env ..." false 2
-echo $'\nSERVER_PORT=\"3333\"' >> .env |& tee -a Logs.txt
+echo $'SERVER_PORT=\"3333\"' >> .env |& tee -a Logs.txt
 
-echo $'\nSERVER_HOST=\"0.0.0.0\"' >> .env |& tee -a Logs.txt
+echo $'SERVER_HOST=\"0.0.0.0\"' >> .env |& tee -a Logs.txt
 
+jwtSecret="myJWTSecret"
+read -p "Informe a JWT-Secret que será utilizada na assinatura do token(default='myJWTSecret') " jwtS
+
+if [ ! -z "$jwtS" ]; then
+    jwtSecret=$jwtS
+fi
+
+showMESSAGE "Adicionando variável JWT_SECRET ao arquivo .env com o valor: '$jwtSecret'" false 2
+echo "JWT_SECRET=\"$jwtSecret\"" >> .env |& tee -a Logs.txt
+
+prepareLogQueryOption() {
+    echo "Para isso, será necessário informar 'GITHUB_CLIENT_ID' e 'GITHUB_CLIENT_SECRET' do seu app do GitHub:"
+    echo "Caso ainda não tenha um, você pode criar em: 'https://github.com/settings/applications/new'"
+
+    read -p "Informe o 'GITHUB_CLIENT_ID': " gitClientId
+    showMESSAGE "Adicionando variável 'GITHUB_CLIENT_ID' ao arquivo .env com o valor: '$gitClientId'" false 2
+    echo "GITHUB_CLIENT_ID=\"$gitClientId\"" >> .env |& tee -a Logs.txt
+
+    read -p "Agora informe o 'GITHUB_CLIENT_SECRET': " gitClientSecret
+    showMESSAGE "Adicionando variável 'GITHUB_CLIENT_SECRET' ao arquivo .env com o valor: '$gitClientSecret'" false 2
+    echo "GITHUB_CLIENT_SECRET=\"$gitClientSecret\"" >> .env |& tee -a Logs.txt
+
+    showMESSAGE "Criando arquivo de rota para autenticação/registro de usuário utilizando o GitHub..." true 2
+
+    cat <<EOF >src/routes/auth.ts
+    import { FastifyInstance } from 'fastify'
+    import axios from 'axios'
+    import { z } from 'zod'
+    import { prisma } from '../lib/prisma'
+
+    export async function authRoutes(app: FastifyInstance) {
+        app.post('/register', async (request) => {
+            const bodySchema = z.object({
+            code: z.string(),
+            })
+
+            const { code } = bodySchema.parse(request.body)
+
+            const accessTokenResponse = await axios.post(
+                'https://github.com/login/oauth/access_token',
+                null,
+                {
+                    params: {
+                    client_id: process.env.GITHUB_CLIENT_ID,
+                    client_secret: process.env.GITHUB_CLIENT_SECRET,
+                    code,
+                    },
+                    headers: {
+                    Accept: 'application/json',
+                    },
+                },
+            )
+
+            const { access_token } = accessTokenResponse.data
+
+            const userResponse = await axios.get('https://api.github.com/user', {
+                headers: {
+                    Authorization: \`Bearer ${access_token}\`,
+                },
+            })
+
+            const userSchema = z.object({
+                id: z.number(),
+                login: z.string(),
+                name: z.string(),
+                avatar_url: z.string().url(),
+            })
+
+            const userInfo = userSchema.parse(userResponse.data)
+
+            let user = await prisma.user.findUnique({
+                where: {
+                    githubId: userInfo.id,
+                },
+            })
+
+            if (!user) {
+                user = await prisma.user.create({
+                    data: {
+                        githubId: userInfo.id,
+                        login: userInfo.login,
+                        name: userInfo.name,
+                        avatarUrl: userInfo.avatar_url,
+                    },
+                })
+            }
+
+            const token = app.jwt.sign(
+                {
+                    name: user.name,
+                    avatarUrl: user.avatarUrl,
+                },
+                {
+                    sub: user.id,
+                    expiresIn: '30 days',
+                },
+            )
+
+            return {
+                token,
+            }
+        })
+    }
+EOF
+}
+
+read -p "Deseja habilitar o login utilizando o GitHub? ([S]im/[N]ão) " activateGitHubLogin
+
+case $activateGitHubLogin in 
+	Sim ) prepareLogQueryOption;;
+  sim ) prepareLogQueryOption;;
+  [sS] ) prepareLogQueryOption;;
+  Yes ) prepareLogQueryOption;;
+  yes ) prepareLogQueryOption;;
+  [yY] ) prepareLogQueryOption;;
+	* ) echo Login com GitHub desabilitado!;
+esac
 
 showMESSAGE "Adicionando exemplo de model(test) ao schema.prisma ..." true 2
-echo $'\nmodel Test {
+echo $'
+model User {
+  id        String @id @default(uuid())
+  githubId  Int    @unique
+  name      String
+  login     String
+  avatarUrl String
+
+  tests Test[]
+  @@map("users")
+}\nmodel Test {
   id            Int      @id @default(autoincrement())
-  name String   @unique
+  name          String   @unique
+  userId        String
   active        Boolean
+  user          User @relation(fields: [userId], references: [id])
   @@map("tests")
 }\n'  >> prisma/schema.prisma |& tee -a Logs.txt
 

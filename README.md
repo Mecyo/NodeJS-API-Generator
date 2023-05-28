@@ -14,8 +14,12 @@ Gerador de Api NodeJS
 8. @types/node -D
 9. dotenv
 10. @fastify/cors
-11. zod
-12. dayjs
+11. @fastify/multipart
+12. @fastify/static
+13. @fastify/jwt
+14. axios
+15. zod
+16. dayjs
 
 
 ## Instalação
