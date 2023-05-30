@@ -184,24 +184,28 @@ EOF
 showMESSAGE "Criando arquivo server.ts para inicialização do servidor..." true 2
 
 cat <<EOF >src/server.ts
-import Fastify from "fastify";
-import dotenv from 'dotenv';
-import jwt from '@fastify/jwt';
+import 'dotenv/config'
+
+import fastify from "fastify";
 import cors from '@fastify/cors';
+import jwt from '@fastify/jwt';
+import multipart from '@fastify/multipart';
 import { appRoutes } from './routes/routes';
 import { authRoutes } from './routes/auth';
 
 
-dotenv.config();
+const app = fastify();
 
-const app = Fastify();
+app.register(cors, {
+    origin: true,
+});
 
-app.register(cors);
-app.register(appRoutes);
-app.register(authRoutes);
 app.register(jwt, {
 	secret: process.env.JWT_SECRET || 'myJWTSecret'
 });
+
+app.register(authRoutes);
+app.register(appRoutes);
 
 //Porta liberada para o servidor
 const port = process.env.SERVER_PORT ? Number(process.env.SERVER_PORT) : 3333;
@@ -230,14 +234,36 @@ dotenv.config();
 
 export async function appRoutes(app: FastifyInstance) {
 
+    const authorizedRoutes = ['/health-check', '/tests'];
+
     app.addHook('preHandler', async (request) => {
-        await request.jwtVerify()
+        if(!authorizedRoutes.includes(request.url.split("?")[0])) {
+            await request.jwtVerify()
+        }
     });
     
     app.get('/health-check', async () => {
         const databaseDate = await prisma.test.count();
         return 'SERVER RUNNING!'
     });
+
+    app.get('/tests', async (request) => {
+        const tests = await prisma.test.findMany({
+          where: {
+            userId: request.user.id,
+            active: true
+          },
+        })
+    
+        return tests.map((test) => {
+          return {
+            id: test.id,
+            coverUrl: test.name,
+            excerpt: test.userId,
+            createdAt: new Date(),
+          }
+        })
+      });
 
     app.get('/getTestParams', async (request, reply) => {
         const getTestParams = z.object({
